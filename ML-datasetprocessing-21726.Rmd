@@ -1,0 +1,65 @@
+---
+title: "ML-datasetprocessing-21726"
+author: "Melanie Leung"
+date: "6/11/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+cn <- CNode('PROD')
+adc <- getMNode(cn,'urn:node:ARCTIC')
+
+rm <- "resource_map_urn:uuid:5ecd5239-1a86-45b7-9393-ff5e8fd426f8"
+pkg <- get_package(adc, rm)
+doc <- read_eml(getObject(adc, pkg$metadata))
+data_pids <- pkg$data
+metadata_pid <-  pkg$metadata
+resource_pid <-  pkg$resource_map
+
+# title
+doc$dataset$title <- "Herbivory changes soil microbial communities and greenhouse gas fluxes in a high-latitude wetland in Yukon Kuskokwim Delta, Alaska, 2018."
+
+#creators and contacts
+doc$dataset$contact <- eml_contact(given_names = 'Bonnie',
+                                   sur_name = 'Waring',
+                                   email = 'bonnie.waring@gmail.com',
+                                   position = "Principal Investigator",
+                                   userId = 'https://orcid.org/0000-0002-8457-5164')
+
+doc$dataset$creator <- arcticdatautils::eml_creator(given_names = 'Bonnie',
+                                   sur_name = 'Waring',
+                                   email = 'bonnie.waring@gmail.com',
+                                   position = "Principal Investigator",
+                                   userId = 'https://orcid.org/0000-0002-8457-5164')
+
+# list indeces
+i <- 1
+pkgData <- list()
+for (i in 1:length(pkg$data)) {
+  file <- getSystemMetadata(adc, pkg$data[[i]])
+  pkgData[[i]] <- paste(file@fileName)
+}
+View(pkgData)
+
+
+# FAIR data practices
+doc <- eml_add_publisher(doc)
+doc <- eml_add_entity_system(doc)
+
+# publish updates
+eml_path <- "/home/mleung/tickets/21726/metadata.xml"
+write_eml(doc, eml_path)
+
+update <- publish_update(adc,
+                         metadata_pid = pkg$metadata,
+                         data_pids = data_pids,
+                         resource_map_pid = rm,
+                         metadata_path = eml_path,
+                         public = F)
+
+```
+

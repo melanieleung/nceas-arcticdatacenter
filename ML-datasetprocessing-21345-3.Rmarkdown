@@ -1,0 +1,556 @@
+---
+title: "ML-datasetprocessing-21345-3"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+Original data package: https://arcticdata.io/catalog/view/urn%3Auuid%3Aec2f0e04-1abf-45eb-84ff-3ea57168d821
+
+## Setup environment: packages and resourceMap
+```{r}
+library(dataone)
+library(rmarkdown)
+library(arcticdatautils)
+library(datapack)
+library(EML)
+library(tidyverse)
+library(raster)
+library(rgdal)
+```
+
+```{r}
+cn <- CNode('PROD')
+adc <- getMNode(cn,'urn:node:ARCTIC')
+
+all_rm_versions <- get_all_versions(adc, rm)
+rm_pid <- all_rm_versions[length(all_rm_versions)-1]
+print(rm_pid)
+
+rm <- "resource_map_urn:uuid:0b4e4488-3189-42c8-b8a5-6b0f1eda76f9"
+pkg <- get_package(adc, rm)
+doc <- read_eml(getObject(adc, pkg$metadata))
+data_pids <- pkg$data
+```
+
+# Preview your data package
+This may have to be run AFTER unzipping any zipped files
+```{r}
+View(doc)
+
+# list pids for metadata
+i <- 1
+pkgData <- list()
+for (i in 1:266) {
+  file <- getSystemMetadata(adc, pkg$data[[i]])
+  pkgData[[i]] <- paste(file@fileName)
+}
+View(pkgData)
+```
+
+## Metadata Updates
+```{r}
+doc$dataset$title <-
+  'Conductivity-Temperature-Depth (CTD) data from the 2019 Distributed Biological Observatory - Northern Chukchi Integrated Study (DBO-NCIS) cruise on US Coast Guard Cutter (USCGC) Healy (HLY1901)'
+  
+doc$dataset$pubDate <- '2021'
+
+step1 <- eml$methodStep(description = "General:
+124 casts were performed using a SeaBird 911plus CTD and deck unit configured to
+measure pressure, temperature, conductivity, oxygen, beam transmission, and
+fluorescence. Data from the CTD were acquired at 24 Hz. The CTD data were acquired
+by an SBE Model 11 plus V2 CTD Deck Unit providing demodulated data to a personal
+computer running SEASAVE (SeaBird). Bottom approach was controlled by real time
+altimeter data and ship provided ocean depth information. For each cast, water samples
+were collected at up to 24 discrete intervals and analyzed for salinity. A rosette frame
+holding 24 10 L Niskin bottles was used for collecting water samples.
+
+CTD calibrations:
+Calibrations for CTD sensors were performed by the manufacturer before the cruise. A
+listing of sensors and calibration dates are presented in the following table. The
+configuration report file for the SBE 911plus containing sensor calibration coefficients
+can be found in appendix A.")
+
+step2 <- eml$methodStep(description = "SeaBird processing:
+As per manufacturer recommendations, CTD data were processed using SeaBird data
+processing software (ver. 7.22.0). The raw CTD data were converted from HEX to
+ASCII, lag corrected, edited for large spikes, smoothed according to sensor, and pressure
+averaged into 1 dB bins for final data quality control and analysis. Given that HLY1901
+took place in a region with strong vertical gradients in both temperature and salinity,
+special care was taken to choose the best values for the ALIGNCTD module so as to
+minimize unphysical spikes in derived salinity values. In addition, special care was taken
+to cut out data prior to and during the surface soak in the DATCNV module. This
+together with LOOPEDIT ensures that only data from the CTD once equilibrated to the
+ocean temperature and salinity was included in the final pressure binned data (CTD
+sensors took roughly 1 min to equilibrate once deployed).
+The following table summarizes the processing routines used together with SeaBird
+recommended parameters for the sensor configuration used. Additional information
+regarding SeaBird processing can be found in the lengthy header of each .cdn downcast
+file.")
+
+step3 <- eml$methodStep(description = "Salinity water sample measurements:
+Water was collected in 200 ml glass bottles. The bottles were rinsed three times, and then
+filled to the neck. After the samples reached the lab temperature of approximately 24 ̊C,
+they were analyzed for salinity using a Guildline Salinometer model 8400 B. The
+salinometer’s bath temperature was set to 24 ̊C and was standardized before and after
+each run using IAPSO Standard Seawater. Accuracies of salinity measurements were
+±0.002 psu.")
+
+methods1 <- eml$methods(methodStep = step1)
+methods2 <- eml$methods(methodStep = step2)
+methods3 <- eml$methods(methodStep = step3)
+doc$dataset$methods[[1]] <- methods1
+doc$dataset$methods[[2]] <- methods2
+doc$dataset$methods[[3]] <- methods3
+eml_validate(doc)
+```
+
+## Create/update otherEntities
+View them first and update anything not there: id, entityName, entityType, entityDescription
+```{r}
+pidOtherEntity1 <- 'urn:uuid:29ae6e47-18ce-4da3-8033-a44356bcc5f4' #HLY1901_CTD_Calibration_Report.pdf
+pidOtherEntity2 <- 'urn:uuid:e5771d51-778a-4c9d-b446-caf28aba335d' #HLY1901_cruise_report.pdf
+
+doc$dataset$otherEntity[[1]]$entityDescription <- "CTD Calibration Report"
+doc$dataset$otherEntity[[2]]$entityDescription <- "Summarized Report on USCGC Healy Cruise HLY1901"
+
+# physicals for otherEntity
+doc$dataset$otherEntity[[1]]$physical <- pid_to_eml_physical(adc, pidOtherEntity1)
+doc$dataset$otherEntity[[2]]$physical <- pid_to_eml_physical(adc, pidOtherEntity2)
+
+```
+
+
+## unzip final_data.zip - load as dataTables
+```{r}
+formatId <- "text/plain"
+
+i <- 1
+pids <- list()
+for (i in 1:9) {
+  pids[[i]] <- publish_object(adc,
+                      path = paste('/home/mleung/tickets/21345/21345-3/final_data/HLY1901_00', i, '.dcc', sep = ""),
+                      format_id = formatId)
+}
+
+i <- 10
+for (i in 10:99) {
+  pids[[i]] <- publish_object(adc,
+                      path = paste('/home/mleung/tickets/21345/21345-3/final_data/HLY1901_0', i, '.dcc', sep = ""),
+                      format_id = formatId)
+}
+
+i <- 100
+for (i in 100:124) {
+  pids[[i]] <- publish_object(adc,
+                      path = paste('/home/mleung/tickets/21345/21345-3/final_data/HLY1901_', i, '.dcc', sep = ""),
+                      format_id = formatId)
+}
+
+# update pids
+data_pids <- c(pids, pidOtherEntity1, pidOtherEntity2)
+
+# create dataTables from pids for the unzipped files: CHECK IF PIDS WILL ALIGN CORRECTLY WITH DATATABLE INDEX
+i <- 1
+for (i in 1:124) {
+  doc$dataset$dataTable[[i]] <- pid_to_eml_entity(adc,
+                                                  pids[[i]],
+                                                  entity_type = "dataTable",
+                                                  entityName = paste('HLY1901 Station', i, 'dcc file'),
+                                                  entityDescription = paste('Text CTD data file for', 'station', i))
+}
+
+# remove zip file from metadata/resourceMap
+doc$dataset$otherEntity[[3]] <- NULL
+```
+
+## Attributes
+```{r}
+# custom units
+custom_units <- data.frame(
+  id = c('dB', 'psu'),
+  name = c('decibel', 'practicalSalinityUnit'),
+  unitType = c('power', 'NA'),
+  parentSI = c('B', 'NA'),
+  multiplierToSI = c('NA','NA'),
+  abbreviation = c('dB','psu'),
+  description = c('A relative unit of measurement corresponding to one tenth of a bel (B)', 'A common unit of salinity'),
+  stringsAsFactors = FALSE)
+
+unitlist <- set_unitList(custom_units, as_metadata = TRUE)
+doc$additionalMetadata <- unitlist
+
+wocecode <- c('1' = 'Not calibrated with water samples', '2' = 'Acceptable measurement', '3' = 'Questionable measurement', '4' = 'Bad measurement', '9' = 'not sampled' )
+factors <- rbind(data.frame(attributeName = 'wocecode', code = names(wocecode), definition = unname(wocecode)))
+
+# set attributes via shiny app
+atts_dcc <- shiny_attributes()
+attributeList_dcc <- EML::set_attributes(attributes = atts_dcc$attributes, factors = factors)
+
+i <- 1
+for (i in 1:124) {
+  doc$dataset$dataTable[[i]]$attributeList <- attributeList_dcc
+}
+
+eml_validate(doc)
+```
+
+## Annotations
+```{r}
+# attribute IDs
+i <- 1
+for (i in 1:124) {
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[1]]$id <- 
+    paste('pres', i, sep = "")
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[2]]$id <-
+    paste('T901_', i, sep = "")
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[3]]$id <- 
+    paste('T902_', i, sep = "")
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[4]]$id <- 
+    paste('Sal1_', i, sep = "")
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[5]]$id <- 
+    paste('Sal2_', i, sep = "")
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[6]]$id <- 
+    paste('OxCur', i, sep = "")
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[7]]$id <- 
+    paste('OXYG', i, sep = "")
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[8]]$id <- 
+    paste('OxCur2_', i, sep = "")
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[9]]$id <- 
+    paste('OXYG2_', i, sep = "")
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[10]]$id <- 
+    paste('Trans', i, sep = "")
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[11]]$id <- 
+    paste('Flur', i, sep = "")
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[12]]$id <- 
+    paste('Altimeter', i, sep = "")
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[13]]$id <- 
+    paste('woceCode', i, sep = "")
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[14]]$id <- 
+    paste('Latitude', i, sep = "")
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[15]]$id <- 
+    paste('Longitude', i, sep = "")
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[16]]$id <- 
+    paste('date', i, sep = "")
+}
+
+# semantic annotations for dcc attributes
+i <- 1
+for (i in 1:124) {
+  #PRES
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[1]]$annotation$valueURI <- 
+    list(label = "Seawater Pressure",
+         valueURI = "http://purl.dataone.org/odo/ECSO_00001187")
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[1]]$annotation$propertyURI <- 
+    list(label = "contains measurements of type",
+         propertyURI = "http://ecoinformatics.org/oboe/oboe.1.2/oboe-core.owl#containsMeasurementsOfType")
+  
+  #T901
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[2]]$annotation$valueURI <- 
+    list(label = "Seawater Temperature",
+         valueURI = "http://pulr.dataone.org/odo/ECSO_00001226")
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[2]]$annotation$propertyURI <- 
+    list(label = "contains measurements of type",
+         propertyURI = "http://ecoinformatics.org/oboe/oboe.1.2/oboe-core.owl#containsMeasurementsOfType")
+  
+  #T902
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[3]]$annotation$valueURI <- 
+    list(label = "Seawater Temperature",
+         valueURI = "http://purl.dataone.org/odo/ECSO_00001226")
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[3]]$annotation$propertyURI <- 
+    list(label = "contains measurements of type",
+         propertyURI = "http://ecoinformatics.org/oboe/oboe.1.2/oboe-core.owl#containsMeasurementsOfType")
+
+  #SAL1
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[4]]$annotation$valueURI <- 
+    list(label = "Water Salinity",
+         valueURI = "http://purl.dataone.org/odo/ECSO_00001164")
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[4]]$annotation$propertyURI <- 
+    list(label = "contains measurements of type",
+         propertyURI = "http://ecoinformatics.org/oboe/oboe.1.2/oboe-core.owl#containsMeasurementsOfType")
+
+  #SAL2
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[5]]$annotation$valueURI <- 
+    list(label = "Water Salinity",
+         valueURI = "http://purl.dataone.org/odo/ECSO_00001164")
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[5]]$annotation$propertyURI <- 
+    list(label = "contains measurements of type",
+         propertyURI = "http://ecoinformatics.org/oboe/oboe.1.2/oboe-core.owl#containsMeasurementsOfType")
+
+  #OXCUR
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[6]]$annotation$valueURI <- 
+    list(label = "voltage raw data",
+         valueURI = "http://purl.dataone.org/odo/ECSO_00001570")
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[6]]$annotation$propertyURI <- 
+    list(label = "contains measurements of type",
+         propertyURI = "http://ecoinformatics.org/oboe/oboe.1.2/oboe-core.owl#containsMeasurementsOfType")
+
+  #OXYG
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[7]]$annotation$valueURI <- 
+    list(label = "dissolved oxygen concentration",
+         valueURI = "http://purl.dataone.org/odo/ECSO_00001669")
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[7]]$annotation$propertyURI <- 
+    list(label = "contains measurements of type",
+         propertyURI = "http://ecoinformatics.org/oboe/oboe.1.2/oboe-core.owl#containsMeasurementsOfType")
+
+  #OXCUR2
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[8]]$annotation$valueURI <- 
+    list(label = "voltage raw data",
+         valueURI = "http://purl.dataone.org/odo/ECSO_00001570")
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[8]]$annotation$propertyURI <- 
+    list(label = "contains measurements of type",
+         propertyURI = "http://ecoinformatics.org/oboe/oboe.1.2/oboe-core.owl#containsMeasurementsOfType")
+
+  #OXYG2
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[9]]$annotation$valueURI <- 
+    list(label = "dissolved oxygen concentration",
+         valueURI = "http://purl.dataone.org/odo/ECSO_00001669")
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[9]]$annotation$propertyURI <- 
+    list(label = "contains measurements of type",
+         propertyURI = "http://ecoinformatics.org/oboe/oboe.1.2/oboe-core.owl#containsMeasurementsOfType")
+
+  #TRANS
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[10]]$annotation$valueURI <- 
+    list(label = "beam transmission percentage",
+         valueURI = "http://purl.dataone.org/odo/ECSO_00001731")
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[10]]$annotation$propertyURI <- 
+    list(label = "contains measurements of type",
+         propertyURI = "http://ecoinformatics.org/oboe/oboe.1.2/oboe-core.owl#containsMeasurementsOfType")
+
+  #FLUR
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[11]]$annotation$valueURI <- 
+    list(label = "seawater fluorescence",
+         valueURI = "http://purl.dataone.org/odo/ECSO_00001560")
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[11]]$annotation$propertyURI <- 
+    list(label = "contains measurements of type",
+         propertyURI = "http://ecoinformatics.org/oboe/oboe.1.2/oboe-core.owl#containsMeasurementsOfType")
+
+  #ALTIMETER
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[12]]$annotation$valueURI <- 
+    list(label = "altitude",
+         valueURI = "http://purl.dataone.org/odo/ECSO_00001564")
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[12]]$annotation$propertyURI <- 
+    list(label = "contains measurements of type",
+         propertyURI = "http://ecoinformatics.org/oboe/oboe.1.2/oboe-core.owl#containsMeasurementsOfType")
+
+  #WOCECODE
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[13]]$annotation$valueURI <- NULL 
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[13]]$annotation$propertyURI <- NULL 
+  
+  #LATITUDE
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[14]]$annotation$valueURI <- 
+    list(label = "latitude coordinate",
+         valueURI = "http://purl.dataone.org/odo/ECSO_00002130")
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[14]]$annotation$propertyURI <- 
+    list(label = "contains measurements of type",
+         propertyURI = "http://ecoinformatics.org/oboe/oboe.1.2/oboe-core.owl#containsMeasurementsOfType")
+  
+  #LONGITUDE
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[15]]$annotation$valueURI <- 
+    list(label = "longitude coordinate",
+         valueURI = "http://purl.dataone.org/odo/ECSO_00002132")
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[15]]$annotation$propertyURI <- 
+    list(label = "contains measurements of type",
+         propertyURI = "http://ecoinformatics.org/oboe/oboe.1.2/oboe-core.owl#containsMeasurementsOfType")
+
+  #DATETIME
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[16]]$annotation$valueURI <- 
+    list(label = "date and time of meeasurement",
+         valueURI = "http://purl.dataone.org/odo/ECSO_00002043")
+  doc$dataset$dataTable[[i]]$attributeList$attribute[[16]]$annotation$propertyURI <- 
+    list(label = "contains measurements of type",
+         propertyURI = "http://ecoinformatics.org/oboe/oboe.1.2/oboe-core.owl#containsMeasurementsOfType")
+}
+
+eml_validate(doc)
+```
+
+
+## Edit People and Associated Parties Section
+```{r}
+doc$dataset$contact <- eml_contact(given_names = 'Leah',
+                                   sur_name = 'McRaven',
+                                   email = 'lmcraven@whoi.edu',
+                                   userId = 'https://orcid.org/0000-0002-4552-4313')
+
+creator1 <- arcticdatautils::eml_creator(given_names = "Leah", 
+                                         sur_name = "McRaven", 
+                                         organization = "Woods Hole Oceanographic Institution", 
+                                         email = "lmcraven@whoi.edu",
+                                         userId = "https://orcid.org/0000-0002-4552-4313",
+                                         position = "Research ASsociate")
+creator2 <- arcticdatautils::eml_creator(given_names = "Robert", 
+                                         sur_name = "Pickart", 
+                                         organization = "Woods Hole Oceanographic Institution",
+                                         position = "Senior Scientist")
+doc$dataset$creator <- list(creator1, creator2)
+```
+
+## Edit Funding:
+```{r}
+# first view where current project is stored to make sure u NULL it after
+doc$dataset$project
+
+doc$dataset$project$award$funderName <- 'National Oceanographic and Atmospheric Administration (NOAA)'
+doc$dataset$project$award$title <- 'NOAA Arctic Program Office, Silver Spring Cooperative Agreement NA14OAR430158'
+
+eml_validate(doc)
+```
+
+## Add to DBO portal
+```{r}
+#https://nceas.github.io/datateam-training/reference/distributed-biological-observatory-dbo-submissions.html
+set_access(adc, #mn
+           unlist(pkg), #pids
+           "CN=DBO,DC=dataone,DC=org", #subjects
+           permissions = c("read", "write", "changePermission"))
+```
+
+## Finalize dataset
+```{r}
+# FAIR data practices
+doc <- eml_add_publisher(doc)
+doc <- eml_add_entity_system(doc)
+
+# publish updates
+eml_path <- "/home/mleung/tickets/21345/21345-3/metadata-3.xml"
+write_eml(doc, eml_path)
+
+update <- publish_update(adc,
+                         metadata_pid = pkg$metadata,
+                         data_pids = data_pids,
+                         resource_map_pid = rm,
+                         metadata_path = eml_path,
+                         public = F)
+```
+Future changes to make: update CTD acronym in abstract, methods, convert project info to eml 2.2.0
+
+```{r}
+# load new resource map
+cn <- CNode('PROD')
+adc <- getMNode(cn,'urn:node:ARCTIC')
+
+rm <- "resource_map_urn:uuid:433684e4-2b7f-42fa-9e53-ecab4e6c2445"
+pkg <- get_package(adc, rm)
+doc <- read_eml(getObject(adc, pkg$metadata))
+data_pids <- pkg$data
+
+# update abstract
+doc$dataset$abstract <- 'The third annual of research cruise the Distributed Biological Observatory – Northern Chukchi Integrated Study (DBO-NCIS) took place on the US Coast Guard Cutter Healy, from 4–23 August, 2019. The overall goal of DBO-NCIS is to document and understand ongoing changes to the Pacific-Arctic ecosystem in light of the changing physical drivers. The main objectives for the cruise were (1) to occupy key transects on the northern Bering and Chukchi shelves, including DBO lines 1-5, with an extensive suite of water column and benthic measurements; (2) to carry out a high-resolution survey of the Chukchi Slope Current to shed light on its fate; (3) to collect numerous underway measurements of the atmosphere-ocean-ice system; and (4) to service moorings owned by the Japan Agency of Marine Science and Technology (JAMSTEC). This submission contains all shipboard CTD (Conductivity, Temperature, Depth) measurements from the HLY1901 cruise. For more information on the DBO-NCIS program, visit https://www2.whoi.edu/site/dboncis/.'
+
+# update methods
+step1 <- eml$methodStep(description = "CTD casts were performed using a ship-provided Sea Bird 911plus CTD and deck unit
+(http://www.seabird.com//sbe911plus-ctd) configured to measure pressure, temperature,
+conductivity, oxygen current, and other variables. The CTD data were acquired by an SBE Deck 
+Unit providing demodulated data to a personal computer running SEASAVE
+(http://www.seabird.com/software/seasave-v7) acquisition software. Calibrations for CTD sensors
+were performed by the manufacturer before the cruise. As per manufacturer recommendations,
+CTD data were processed using Sea Bird data processing software
+(http://www.seabird.com/software/sbe-data-processing).")
+methods1 <- eml$methods(methodStep = step1)
+doc$dataset$methods <- methods1
+eml_validate(doc)
+
+# set access
+set_access(adc, #mn
+           unlist(pkg), #pids
+           "CN=DBO,DC=dataone,DC=org", #subjects
+           permissions = c("read", "write", "changePermission"))
+
+# publish changes
+# FAIR data practices
+doc <- eml_add_publisher(doc)
+doc <- eml_add_entity_system(doc)
+
+# publish updates
+eml_path <- "/home/mleung/tickets/21345/21345-3/metadata-3.xml"
+write_eml(doc, eml_path)
+
+update <- publish_update(adc,
+                         metadata_pid = pkg$metadata,
+                         data_pids = data_pids,
+                         resource_map_pid = rm,
+                         metadata_path = eml_path,
+                         public = F)
+```
+```
+# 3rd version of RM - edit awards
+resource_map_urn:uuid:b2f78bcd-b75c-43b6-a44d-936c5abbd4f1
+```{r}
+# load new resource map
+cn <- CNode('PROD')
+adc <- getMNode(cn,'urn:node:ARCTIC')
+
+rm <- "resource_map_urn:uuid:b2f78bcd-b75c-43b6-a44d-936c5abbd4f1"
+pkg <- get_package(adc, rm)
+doc <- read_eml(getObject(adc, pkg$metadata))
+data_pids <- pkg$data
+
+# remove funding section from project
+doc$dataset$project$funding
+doc$dataset$project$funding <- NULL
+
+# set access
+set_access(adc, #mn
+           unlist(pkg), #pids
+           "CN=DBO,DC=dataone,DC=org", #subjects
+           permissions = c("read", "write", "changePermission"))
+
+# publish changes
+# FAIR data practices
+doc <- eml_add_publisher(doc)
+doc <- eml_add_entity_system(doc)
+
+# publish updates
+eml_path <- "/home/mleung/tickets/21345/21345-3/metadata-3.xml"
+write_eml(doc, eml_path)
+
+update <- publish_update(adc,
+                         metadata_pid = pkg$metadata,
+                         data_pids = data_pids,
+                         resource_map_pid = rm,
+                         metadata_path = eml_path,
+                         public = T)
+```
+
+
+# Publish publicly and with DOI
+```{r}
+# load new resource map
+cn <- CNode('PROD')
+adc <- getMNode(cn,'urn:node:ARCTIC')
+
+rm <- "resource_map_urn:uuid:f3b43e66-42ac-4bdf-a144-04d253522ac2"
+pkg <- get_package(adc, rm)
+doc <- read_eml(getObject(adc, pkg$metadata))
+data_pids <- pkg$data
+
+# set access
+set_access(adc, #mn
+           unlist(pkg), #pids
+           "CN=DBO,DC=dataone,DC=org", #subjects
+           permissions = c("read", "write", "changePermission"))
+
+# publish changes
+# FAIR data practices
+doc <- eml_add_publisher(doc)
+doc <- eml_add_entity_system(doc)
+
+# publish updates
+eml_path <- "/home/mleung/tickets/21345/21345-3/metadata-3.xml"
+write_eml(doc, eml_path)
+
+update <- publish_update(adc,
+                         metadata_pid = pkg$metadata,
+                         data_pids = data_pids,
+                         use_doi = T,
+                         resource_map_pid = rm,
+                         metadata_path = eml_path,
+                         public = T)
+```
+
+

@@ -1,0 +1,558 @@
+---
+title: "ML-datasetprocessing-21982"
+author: "Melanie Leung"
+date: "5/11/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+# https://arcticdata.io/catalog/view/urn%3Auuid%3A798d74d7-4fe2-48be-9e14-0ff2439f164b
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+## Setup environment: packages and resourceMap
+```{r}
+library(dataone)
+library(rmarkdown)
+library(arcticdatautils)
+library(datapack)
+library(EML)
+library(tidyverse)
+library(raster)
+library(rgdal)
+```
+
+```{r}
+cn <- CNode('PROD')
+adc <- getMNode(cn,'urn:node:ARCTIC')
+
+all_rm_versions <- get_all_versions(adc, rm)
+rm_pid <- all_rm_versions[length(all_rm_versions)-1]
+print(rm_pid)
+
+rm <- "resource_map_urn:uuid:0aa73173-882d-4488-b2b5-409113ed93e6"
+pkg <- get_package(adc, rm)
+doc <- read_eml(getObject(adc, pkg$metadata))
+data_pids <- pkg$data
+```
+
+# list the metadata
+```{r}
+i <- 1
+pkgData <- list()
+for (i in 1:266) {
+  file <- getSystemMetadata(adc, pkg$data[[i]])
+  pkgData[[i]] <- paste(file@fileName)
+}
+View(pkgData)
+```
+
+## Metadata Updates
+```{r}
+doc$dataset$abstract <- "This dataset is an inventory of all lakes within 1 km of a glacier in Alaska and northwest Canada (Randolph Glacier Inventory (RGI) Region 01) for four different time periods: 1984-1988, 1997-2001, 2007-2011, and 2016-2019. Outlines were created from ~5-year Landsat composites made in Google Earth Engine. Lakes are identified using supervised classification, thresholding, and manual verification. For each lake, area, dam type, topological location, and associated RGI glacier ID are reported. This time-varying inventory was created to help understand historic changes in ice-marginal lakes in Alaska and the role of dam type and position in characterizing lake trends."
+
+# update NSF awards data
+awards <- "1840343"
+proj <- eml_nsf_to_project(awards)
+doc$dataset$project <- proj
+
+eml_validate(doc)
+
+```
+
+## process shapefile zip - load as spatialVector/dataTable
+```{r}
+# attribute table
+atts <- shiny_attributes()
+attributeList <- EML::set_attributes(attributes = atts$attributes)
+
+attributes <- data.frame(
+    attributeName = c(
+      'AREA_GEO', 
+      'Dam_Type', 
+      'Connection',
+      'Lat', 
+      'Lon', 
+      'Perimeter', 
+      'YearStart', 
+      'YearEnd', 
+      'YearMid', 
+      'RGIId', 
+      'GLIMSId', 
+      'Name', 
+      'LakeID'),
+    attributeDefinition = c(
+      "area of the lake in km2", 
+      "type of dam impounding the lake",
+      "topological location: lake's relationship to the associated glacier", 
+      "latitude", 
+      "longitude", 
+      "perimeter of lake in km", 
+      "start date of the time period used in image composite", 
+      "end date of the time period used in image composite", 
+      "mid point of the time period", 
+      "associated glacier's ID in the Randolph Glacier Inventory (RGI)", 
+      "associated glacier's GLIMS ID", 
+      "name of associated glacier in the RGI",
+      "unique ID for each lake in the inventory"),
+    measurementScale = c(
+      'ratio', 
+      'nominal',
+      'nominal', 
+      'interval', 
+      'interval', 
+      'ratio', 
+      'dateTime', 
+      'dateTime',
+      'dateTime',
+      'nominal', 
+      'nominal', 
+      'nominal',
+      'nominal'),
+    domain = c(
+      'numericDomain',
+      'textDomain',
+      'textDomain', 
+      'numericDomain', 
+      'numericDomain', 
+      'numericDomain', 
+      'dateTimeDomain', 
+      'dateTimeDomain',
+      'dateTimeDomain',
+      'textDomain', 
+      'textDomain', 
+      'textDomain',
+      'textDomain'), 
+    formatString = c(NA,NA,NA,NA,NA,NA,'YYYY','YYYY','YYYY',NA,NA,NA,NA), 
+    definition = c(
+      NA,
+      "type of dam impounding the lake",
+      "topological location: lake's relationship to the associated glacier",
+      NA,
+      NA,
+      NA,
+      NA,
+      NA,
+      NA,
+      "associated glacier's ID in the Randolph Glacier Inventory (RGI)",
+      "associated glacier's GLIMS ID",
+      "name of associated glacier in the RGI",
+      "unique ID for each lake in the inventory"), 
+    unit = c('squareKilometers', 
+             NA, 
+             NA, 
+             'degree',
+             'degree', 
+             'kilometer',
+             NA, 
+             NA, 
+             NA, 
+             NA, 
+             NA, 
+             NA, 
+             NA),
+    numberType = c(
+      'real',
+      NA,
+      NA,
+      'real',
+      'real',
+      'real',
+      NA,
+      NA,
+      NA,
+      NA,
+      NA,
+      NA,
+      NA),
+    missingValueCode = c(NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA),
+    missingValueCodeExplanation = c(NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA,NA))
+
+attributeList <- EML::set_attributes(attributes = attributes)
+physical <- arcticdatautils::pid_to_eml_physical(adc, pkg$data[[1]])
+doc$dataset$spatialVector[[1]]$attributeList <- set_attributes(attributes = attributes)
+
+
+# find out spatialReference
+library(sf)
+spatial_file <- arcticdatautils::read_zip_shapefile(adc, pkg$data[[1]])
+sf::st_crs(spatial_file) # find spatial coordinate system
+
+# spatialVector set up
+spatialVector <- pid_to_eml_entity(adc, 
+                                   pkg$data[[1]], 
+                                   entity_type = "spatialVector",
+                                   entityName = "Alaska Lake Outlines",
+                                   entityDescription = "Outline of all lakes within 1 km of a glacier in Alaska and northwest Canada",
+                                   attributeList = attributeList,
+                                   geometry = "Polygon",
+                                   spatialReference = list(horizCoordSysName = "GCS_WGS_1984")
+                                   )
+doc$dataset$spatialVector[[1]] <- spatialVector
+
+```
+
+# Preview your data package
+run AFTER unzipping any zipped files
+```{r}
+View(doc)
+
+# list pids for metadata
+i <- 1
+pkgData <- list()
+for (i in 1:length(pkg$data)) {
+  file <- getSystemMetadata(adc, pkg$data[[i]])
+  pkgData[[i]] <- paste(file@fileName)
+}
+View(pkgData)
+```
+
+## Annotations
+```{r}
+# attribute IDs: 
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[1]]$id <- 
+    paste('areaGeo')
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[2]]$id <- 
+    paste('damType')
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[3]]$id <- 
+    paste('connection')
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[4]]$id <- 
+    paste('latitude')
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[5]]$id <- 
+    paste('longitude')
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[6]]$id <- 
+    paste('perimeter')
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[7]]$id <- 
+    paste('yearStart')
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[8]]$id <- 
+    paste('yearEnd')
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[9]]$id <- 
+    paste('yearMid')
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[10]]$id <- 
+    paste('RGIId')
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[11]]$id <- 
+    paste('GLIMSId')
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[12]]$id <- 
+    paste('Name')
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[13]]$id <- 
+    paste('LakeID')
+
+# semantic annotations for dcc attributes
+#Lake area
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[1]]$annotation$valueURI <- 
+    list(label = "lake area",
+         valueURI = "http://purl.dataone.org/odo/ECSO_00001725")
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[1]]$annotation$propertyURI <- 
+    list(label = "contains measurements of type",
+         propertyURI = "http://ecoinformatics.org/oboe/oboe.1.2/oboe-core.owl#containsMeasurementsOfType")
+  
+#Dam Type
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[2]]$annotation$valueURI <- NULL
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[2]]$annotation$propertyURI <- NULL
+  
+#Connection
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[3]]$annotation$valueURI <- NULL
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[3]]$annotation$propertyURI <- NULL
+
+#Lat
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[4]]$annotation$valueURI <- 
+    list(label = "latitude coordinate",
+         valueURI = "http://purl.dataone.org/odo/ECSO_00002130")
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[4]]$annotation$propertyURI <- 
+    list(label = "contains measurements of type",
+         propertyURI = "http://ecoinformatics.org/oboe/oboe.1.2/oboe-core.owl#containsMeasurementsOfType")
+
+#Lon
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[5]]$annotation$valueURI <- 
+    list(label = "longitude coordinate",
+         valueURI = "http://purl.dataone.org/odo/ECSO_00002132")
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[5]]$annotation$propertyURI <- 
+    list(label = "contains measurements of type",
+         propertyURI = "http://ecoinformatics.org/oboe/oboe.1.2/oboe-core.owl#containsMeasurementsOfType")
+
+#Lake perimeter
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[6]]$annotation$valueURI <- 
+    list(label = "perimeter",
+         valueURI = "http://purl.obolibrary.org/obo/PATO_0001711")
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[6]]$annotation$propertyURI <- 
+    list(label = "contains measurements of type",
+         propertyURI = "http://ecoinformatics.org/oboe/oboe.1.2/oboe-core.owl#containsMeasurementsOfType")
+
+#YearStart
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[7]]$annotation$valueURI <- 
+    list(label = "year of measurement",
+         valueURI = "http://purl.dataone.org/odo/ECSO_00002050")
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[7]]$annotation$propertyURI <- 
+    list(label = "contains measurements of type",
+         propertyURI = "http://ecoinformatics.org/oboe/oboe.1.2/oboe-core.owl#containsMeasurementsOfType")
+
+#YearEnd
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[8]]$annotation$valueURI <- 
+    list(label = "year of measurement",
+         valueURI = "http://purl.dataone.org/odo/ECSO_00002050")
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[8]]$annotation$propertyURI <- 
+    list(label = "contains measurements of type",
+         propertyURI = "http://ecoinformatics.org/oboe/oboe.1.2/oboe-core.owl#containsMeasurementsOfType")
+
+#YearMid
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[9]]$annotation$valueURI <- 
+    list(label = "year of measurement",
+         valueURI = "http://purl.dataone.org/odo/ECSO_00002050")
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[9]]$annotation$propertyURI <- 
+    list(label = "contains measurements of type",
+         propertyURI = "http://ecoinformatics.org/oboe/oboe.1.2/oboe-core.owl#containsMeasurementsOfType")
+
+#RGIId: glacier's ID
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[10]]$annotation$valueURI <- 
+    list(label = "feature identifier",
+         valueURI = "http://purl.dataone.org/odo/ECSO_00002482")
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[10]]$annotation$propertyURI <- 
+    list(label = "contains measurements of type",
+         propertyURI = "http://ecoinformatics.org/oboe/oboe.1.2/oboe-core.owl#containsMeasurementsOfType")
+
+#GLIMs glacier's ID
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[11]]$annotation$valueURI <- 
+     list(label = "feature identifier",
+         valueURI = "http://purl.dataone.org/odo/ECSO_00002482")
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[11]]$annotation$propertyURI <- 
+    list(label = "contains measurements of type",
+         propertyURI = "http://ecoinformatics.org/oboe/oboe.1.2/oboe-core.owl#containsMeasurementsOfType")
+  
+#glacier Name
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[12]]$annotation$valueURI <- 
+    list(label = "Name",
+         valueURI = "http://purl.dataone.org/odo/ECSO_00001193")
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[12]]$annotation$propertyURI <- 
+    list(label = "contains measurements of type",
+         propertyURI = "http://ecoinformatics.org/oboe/oboe.1.2/oboe-core.owl#containsMeasurementsOfType")
+  
+#lake id
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[13]]$annotation$valueURI <- 
+    list(label = "lake identifier",
+         valueURI = "http://purl.dataone.org/odo/ECSO_00002565")
+doc$dataset$spatialVector[[1]]$attributeList$attribute[[13]]$annotation$propertyURI <- 
+    list(label = "contains measurements of type",
+         propertyURI = "http://ecoinformatics.org/oboe/oboe.1.2/oboe-core.owl#containsMeasurementsOfType")
+
+eml_validate(doc)
+```
+
+## Edit People and Associated Parties Section
+```{r}
+doc$dataset$contact <- eml_contact(given_names = 'Brianna',
+                                   sur_name = 'Rick',
+                                   email = 'brianna.rick@colostate.edu',
+                                   userId = 'https://orcid.org/0000-0002-0516-7577')
+
+creator1 <- arcticdatautils::eml_creator(given_names = "Brianna", 
+                                         sur_name = "Rick", 
+                                         organization = "Department of Geosciences, Colorado State University", 
+                                         email = "brianna.rick@colostate.edu",
+                                         userId = "https://orcid.org/0000-0002-0516-7577")
+creator2 <- arcticdatautils::eml_creator(given_names = "Daniel", 
+                                         sur_name = "McGrath", 
+                                         organization = "Department of Geosciences, Colorado State University",
+                                         email = "daniel.mcgrath@colostate.edu",
+                                         userId = "https://orcid.org/0000-0002-9462-6842")
+doc$dataset$creator <- list(creator1, creator2)
+```
+
+## Finalize dataset
+```{r}
+# FAIR data practices
+doc <- eml_add_publisher(doc)
+doc <- eml_add_entity_system(doc)
+
+# publish updates
+eml_path <- "/home/mleung/tickets/21982/metadata.xml"
+write_eml(doc, eml_path)
+
+data_pids <- unlist(data_pids)
+
+update <- publish_update(adc,
+                         metadata_pid = pkg$metadata,
+                         data_pids = data_pids,
+                         resource_map_pid = rm,
+                         metadata_path = eml_path,
+                         public = F)
+```
+# Make edits from peer review comments
+```{r}
+cn <- CNode('PROD')
+adc <- getMNode(cn,'urn:node:ARCTIC')
+
+rm <- "resource_map_urn:uuid:98474480-d9c8-492d-b21e-3cc2c30fa019"
+pkg <- get_package(adc, rm)
+doc <- read_eml(getObject(adc, pkg$metadata))
+data_pids <- pkg$data
+
+# update abstract
+doc$dataset$abstract <- "This dataset is an inventory of all lakes within 1 km (kilometer) of a glacier in Alaska and northwest Canada (Randolph Glacier Inventory (RGI) Region 01) for four different time periods: 1984-1988, 1997-2001, 2007-2011, and 2016-2019. Outlines were created from ~5-year Landsat composites made in Google Earth Engine. Lakes are identified using supervised classification, thresholding, and manual verification. For each lake, area, dam type, topological location, and associated RGI glacier ID (identification) are reported. This time-varying inventory was created to help understand historic changes in ice-marginal lakes in Alaska and the role of dam type and position in characterizing lake trends."
+
+# formatID
+doc$dataset$spatialVector$physical$dataFormat$externallyDefinedFormat$formatName <- "application/vnd.shp+zip"
+
+# fix lat/lon coordinate attribute definitions
+doc$dataset$spatialVector$attributeList$attribute[[4]]$attributeDefinition <- "A geographic coordinate that specifies the north-south position of a point on the Earth's surface."
+doc$dataset$spatialVector$attributeList$attribute[[5]]$attributeDefinition <- "A geographic coordinate that specifies the east-west position of a point on the Earth's surface."
+
+# physical/sysmeta
+sysmeta <- getSystemMetadata(adc, rm)
+sysmeta@fileName <- '21982-metadata.xml'
+sysmeta@formatId <- "eml://ecoinformatics.org/eml-2.1.1"
+updateSystemMetadata(adc, rm, sysmeta)
+
+sysmeta_sv <- getSystemMetadata(adc, pkg$data[[1]])
+sysmeta_sv@formatId <- 'application/vnd.shp+zip'
+updateSystemMetadata(adc, pkg$data[[1]], sysmeta_sv)
+
+# publish updates
+eml_path <- "/home/mleung/tickets/21982/metadata.xml"
+write_eml(doc, eml_path)
+
+data_pids <- unlist(data_pids)
+
+update <- publish_update(adc,
+                         metadata_pid = pkg$metadata,
+                         data_pids = data_pids,
+                         resource_map_pid = rm,
+                         metadata_path = eml_path,
+                         public = F)
+
+orcid <- "https://orcid.org/0000-0002-0516-7577"
+set_rights_and_access(adc, c(update$metadata, update$resource_map, update$data), orcid)
+```
+
+```{r}
+rm_pid_original <- "resource_map_urn:uuid:0aa73173-882d-4488-b2b5-409113ed93e6"
+all_rm_versions <- get_all_versions(adc, rm_pid_original)
+rm_pid <- all_rm_versions[length(all_rm_versions)]
+print(rm_pid)
+
+cn <- CNode('PROD')
+adc <- getMNode(cn,'urn:node:ARCTIC')
+
+# trying to fix my mistakes
+sysmeta <- getSystemMetadata(adc, rm)
+sysmeta@fileName <- 'resourcemap.rdf'
+sysmeta@formatId <- "http://www.openarchives.org/ore/terms"
+updateSystemMetadata(adc, rm, sysmeta)
+
+rm <- "resource_map_urn:uuid:98474480-d9c8-492d-b21e-3cc2c30fa019"
+pkg <- get_package(adc, rm)
+metadata_pid <-  pkg$metadata
+data_pid <-  pkg$data
+resource_pid <-  pkg$resource_map
+doc <- read_eml(getObject(adc, pkg$metadata))
+
+# run this on metadata pid
+sysmeta <- getSystemMetadata(adc, metadata_pid)
+sysmeta@fileName <- '21982-metadata.xml'
+sysmeta@formatId <- "eml://ecoinformatics.org/eml-2.1.1"
+updateSystemMetadata(adc, metadata_pid, sysmeta)
+
+# update physical
+physical <- arcticdatautils::pid_to_eml_physical(adc, pkg$data[[1]])
+
+eml_path <- "/home/mleung/tickets/21982/metadata.xml"
+write_eml(doc, eml_path)
+
+# left off here: run update now?
+update <- publish_update(adc,
+                         metadata_pid = "urn:uuid:00aae511-4890-4a47-85a3-85e1e0238b01",
+                         data_pids = data_pids,
+                         resource_map_pid = rm,
+                         metadata_path = eml_path,
+                         public = F)
+
+```
+Trying again with another update
+```{r}
+cn <- CNode('PROD')
+adc <- getMNode(cn,'urn:node:ARCTIC')
+
+rm <- "resource_map_urn:uuid:ad67607d-7928-4e06-8168-c230ed542c65"
+pkg <- get_package(adc, rm)
+doc <- read_eml(getObject(adc, pkg$metadata))
+data_pids <- pkg$data
+metadata_pid <-  pkg$metadata
+resource_pid <-  pkg$resource_map
+
+# update abstract
+doc$dataset$abstract <- "This dataset is an inventory of all lakes within 1 km (kilometer) of a glacier in Alaska and northwest Canada (Randolph Glacier Inventory (RGI) Region 01) for four different time periods: 1984-1988, 1997-2001, 2007-2011, and 2016-2019. Outlines were created from ~5-year Landsat composites made in Google Earth Engine. Lakes are identified using supervised classification, thresholding, and manual verification. For each lake, area, dam type, topological location, and associated RGI glacier ID (identification) are reported. This time-varying inventory was created to help understand historic changes in ice-marginal lakes in Alaska and the role of dam type and position in characterizing lake trends."
+
+# formatID
+doc$dataset$spatialVector$physical$dataFormat$externallyDefinedFormat$formatName <- "application/vnd.shp+zip"
+
+# fix lat/lon coordinate attribute definitions
+doc$dataset$spatialVector$attributeList$attribute[[4]]$attributeDefinition <- "A geographic coordinate that specifies the north-south position of a point on the Earth's surface."
+doc$dataset$spatialVector$attributeList$attribute[[5]]$attributeDefinition <- "A geographic coordinate that specifies the east-west position of a point on the Earth's surface."
+
+# physical/sysmeta: 
+sysmeta <- getSystemMetadata(adc, rm)
+sysmeta@fileName <- 'resourcemap.rdf'
+sysmeta@formatId <- "http://www.openarchives.org/ore/terms"
+updateSystemMetadata(adc, rm, sysmeta)
+
+sysmeta <- getSystemMetadata(adc, metadata_pid)
+sysmeta@fileName <- '21982-metadata.xml'
+sysmeta@formatId <- "eml://ecoinformatics.org/eml-2.1.1"
+updateSystemMetadata(adc, metadata_pid, sysmeta)
+
+# publish updates
+eml_path <- "/home/mleung/tickets/21982/metadata.xml"
+write_eml(doc, eml_path)
+
+data_pids <- unlist(data_pids) # not always necessary to run
+
+update <- publish_update(adc,
+                         metadata_pid = pkg$metadata,
+                         data_pids = data_pids,
+                         resource_map_pid = rm,
+                         metadata_path = eml_path,
+                         public = F)
+
+orcid <- "https://orcid.org/0000-0002-0516-7577"
+set_rights_and_access(adc, c(update$metadata, update$resource_map, update$data), orcid)
+```
+
+Hopefully final edits
+```{r}
+cn <- CNode('PROD')
+adc <- getMNode(cn,'urn:node:ARCTIC')
+
+rm <- "resource_map_urn:uuid:66a556d4-a827-419e-9dda-f67bb30e7e55"
+pkg <- get_package(adc, rm)
+doc <- read_eml(getObject(adc, pkg$metadata))
+data_pids <- pkg$data
+metadata_pid <-  pkg$metadata
+resource_pid <-  pkg$resource_map
+
+# update methods
+doc$dataset$methods$methodStep$description <- 
+  "Cloud-free mosaics were compiled in Google Earth Engine (GEE), an open source, web-based remote sensing platform.  Landsat 5, Landsat 7, and Landsat 8 surface reflectance tier 1 images were used to create 5-year composites. Intervals were selected based on available imagery and to capture average lake outlines for a five year period within each decade (1980s to 2010s). Imagery was limited to a 10 km buffer around the Randolph Glacier Inventory (RGI v6.0, Region 01; RGI Consortium, 2017). For each pixel within the region of interest, the mosaicking algorithm calculates the median value of all cloud-free pixels between July 1st and September 31st for each year within the given time period. Five-year mosaics minimize the impact of frequent cloud cover in Alaska, which complicates region-wide assessments on shorter time-scales. Image composites were classified in ArcGIS Pro using an object-based supervised classification (Support Vector Machine). To reduce false positives from mountain shadows, which have a similar spectral signal as water, a slope threshold of 10° was implemented. We used a digital elevation model (DEM) composed of the national elevation dataset (NED; 10 m resolution) and Worldview-derived DEMs (resampled to 10 m resolution). A minimum area threshold of 0.05 km2 (~7.5 pixels squared) excludes pixel-level noise and small lakes with minimal hydrological impact and GLOF potential. Lakes with margins entirely outside a 1 km buffer from the RGI were eliminated to minimize the inclusion of lakes disconnected from a glacial system. All lake outlines were visually inspected and, if necessary, the lake margins were manually adjusted to produce a final delineation. Lakes were added or excluded based on visual inspection and consideration of all four time steps together; lakes less than 0.05 km2 were manually added back in if the lake grew in subsequent years to minimize false signals of lake formation. Every lake in each time step was then classified by i) dam type, ii) topological location, and iii) stability."
+
+# publish updates
+eml_path <- "/home/mleung/tickets/21982/metadata.xml"
+write_eml(doc, eml_path)
+
+data_pids <- unlist(data_pids) # not always necessary to run
+
+update <- publish_update(adc,
+                         metadata_pid = pkg$metadata,
+                         data_pids = data_pids,
+                         resource_map_pid = rm,
+                         metadata_path = eml_path,
+                         use_doi = T,
+                         public = T)
+
+orcid <- "https://orcid.org/0000-0002-0516-7577"
+set_rights_and_access(adc, c(update$metadata, update$resource_map, update$data), orcid)
+```
+
+
